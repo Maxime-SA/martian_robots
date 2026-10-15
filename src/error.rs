@@ -1,8 +1,15 @@
-#[derive(Debug)]
+// talk about how I would make these more descriptive
+#[derive(Debug, Eq, PartialEq)]
 pub enum MarsError {
     RobotCollision,
     CoordinateOutOfBounds,
-    RobotNotFound
+    RobotNotFound,
+    CouldNotParseWorldDimensions,
+    CouldNotParseOrientation,
+    CouldNotParseCoordinates,
+    CouldNotParseInstructions,
+    TooManyInstructions,
+    WorldDimensionTooLarge,
 }
 
 pub type Result<T> = std::result::Result<T, MarsError>;

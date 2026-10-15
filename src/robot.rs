@@ -1,20 +1,13 @@
-// we could make this dynamic at run-time
-pub enum Instruction {
-    Left,
-    Right,
-    Forward,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub struct RobotId(pub u128);
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 enum RobotStatus {
     Alive,
     Lost,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Robot {
     id: RobotId,
     status: RobotStatus,
@@ -27,15 +20,11 @@ impl Robot {
         }
     }
 
-    pub fn id(&self) -> &RobotId {
-        &self.id
-    }
-
-    pub fn status(&self) -> &RobotStatus {
-        &self.status
-    }
-
     pub fn set_lost_status(&mut self) {
         self.status = RobotStatus::Lost;
+    }
+
+    pub fn is_lost(&self) -> bool {
+        self.status == RobotStatus::Lost
     }
 }

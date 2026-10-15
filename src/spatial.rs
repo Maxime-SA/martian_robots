@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::fmt::write;
 
 use crate::error::{MarsError, Result};
 use crate::robot::RobotId;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum Orientation {
     North,
     South,
@@ -16,8 +15,8 @@ impl Orientation {
         match self {
             Orientation::East => (1, 0),
             Orientation::West => (-1, 0),
-            Orientation::South => (0, 1),
-            Orientation::North => (0, -1),
+            Orientation::North => (0, 1),
+            Orientation::South => (0, -1),
         }
     }
 
@@ -39,14 +38,28 @@ impl Orientation {
         }
     }
 }
+impl std::fmt::Display for Orientation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Orientation::East => "E",
+                Orientation::North => "N",
+                Orientation::South => "S",
+                Orientation::West => "W",
+            }
+        )
+    }
+}
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub struct Coordinate {
     x: usize, // could be u8 since the max value is 50 but better DevEx to use usize
     y: usize,
 }
 impl Coordinate {
-    fn new(x: usize, y: usize) -> Self {
+    pub fn new(x: usize, y: usize) -> Self {
         Self { x, y }
     }
 
@@ -65,32 +78,48 @@ impl Coordinate {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub struct Position {
     coordinate: Coordinate,
     orientation: Orientation,
 }
 impl Position {
-    fn new(coordinate: Coordinate, orientation: Orientation) -> Self {
+    pub fn new(coordinate: Coordinate, orientation: Orientation) -> Self {
         Self {
             coordinate,
             orientation,
         }
     }
+
+    pub fn coord(&self) -> Coordinate {
+        self.coordinate
+    }
+}
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {}",
+            self.coordinate.x, self.coordinate.y, self.orientation
+        )
+    }
 }
 
 // talk about how we could make this generic over RobotId
 pub struct Grid {
-    nrows: usize,
     ncols: usize,
-    grid: Vec<Option<()>>, // chose 1D for better cache efficiency - this could also just be a hashset
+    nrows: usize,
+    grid: Vec<Option<RobotId>>, // chose 1D for better cache efficiency - this could also just be a hashset
     positions: HashMap<RobotId, Position>,
 }
 impl Grid {
-    pub fn new(nrows: usize, ncols: usize) -> Self {
+    pub fn new(max_col: usize, max_row: usize) -> Self {
+        let ncols = max_col + 1;
+        let nrows = max_row + 1;
+
         Self {
-            nrows,
             ncols,
+            nrows,
             grid: vec![None; nrows * ncols],
             positions: HashMap::new(),
         }
@@ -103,7 +132,7 @@ impl Grid {
             Err(MarsError::RobotCollision)
         } else {
             self.positions.insert(id, position);
-            self.grid[i] = Some(());
+            self.grid[i] = Some(id);
             Ok(())
         }
     }
@@ -141,35 +170,59 @@ impl Grid {
             self.grid[old_i] = None;
 
             *self.positions.get_mut(id).unwrap() = Position::new(new_coord, position.orientation);
-            self.grid[new_i] = Some(());
+            self.grid[new_i] = Some(id.clone());
 
             Ok(())
         }
     }
 
-    pub fn get_coord(&self, id: &RobotId) -> Result<&Coordinate> {
+    pub fn get_position(&self, id: &RobotId) -> Result<Position> {
         self.positions
             .get(id)
+            .cloned()
             .ok_or(MarsError::RobotNotFound)
-            .map(|position| &position.coordinate)
     }
 
     fn map_coord(&self, coord: &Coordinate) -> Result<usize> {
-        if coord.x < self.ncols && coord.y < self.nrows {
-            Ok(self.ncols * coord.y + coord.x)
+        /*
+           Grid representation:
+           - bottom-left is (0, 0)
+           - top-right is (ncols - 1, nrows - 1)
+
+           coord.x maps to coord.x (identity function)
+           coord.y maps to (nrows - coord.y - 1)
+        */
+        let y = self
+            .nrows
+            .checked_sub_signed(coord.y as isize + 1)
+            .ok_or(MarsError::CoordinateOutOfBounds)?;
+
+        if coord.x < self.ncols && y < self.nrows {
+            Ok(self.ncols * y + coord.x)
         } else {
             Err(MarsError::CoordinateOutOfBounds)
         }
     }
 }
 
+// practical for debugging purposes
 impl std::fmt::Display for Grid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for row in 0..self.nrows {
+        for row in (0..self.nrows).rev() {
             for col in 0..self.ncols {
-                let i = self.map_coord(&Coordinate::new(row, col)).unwrap();
-                if self.grid[i].is_some() {
-                    write!(f, "\x1b[32mR\x1b[0m")?;
+                let i = self.map_coord(&Coordinate::new(col, row)).unwrap();
+                if let Some(id) = self.grid[i].as_ref() {
+                    let token = match self
+                        .get_position(id)
+                        .map(|position| position.orientation)
+                        .unwrap()
+                    {
+                        Orientation::East => "\u{2192}",
+                        Orientation::North => "\u{2191}",
+                        Orientation::South => "\u{2193}",
+                        Orientation::West => "\u{2190}",
+                    };
+                    write!(f, "\x1b[32m{token}\x1b[0m")?;
                 } else {
                     write!(f, ".")?;
                 }
