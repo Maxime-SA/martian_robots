@@ -1,10 +1,9 @@
-use crate::Coordinate;
 use crate::error::{MarsError, Result};
 use crate::mars::Instruction;
 use crate::spatial::{Orientation, Position};
 
 const MAX_COORDINATE: usize = 50;
-const MAX_INSTRUCTION_LEN: usize = 100;
+const MAX_INSTRUCTION_LEN: usize = 99;
 
 pub fn parse_world_dimensions(input: &str) -> Result<(usize, usize)> {
     if let Some((max_cols, max_rows)) = input.trim().split_once(' ')
@@ -12,7 +11,7 @@ pub fn parse_world_dimensions(input: &str) -> Result<(usize, usize)> {
         && let Ok(max_rows) = max_rows.trim().parse::<usize>()
     {
         if max_cols > MAX_COORDINATE || max_rows > MAX_COORDINATE {
-            Err(MarsError::WorldDimensionTooLarge)
+            Err(MarsError::WorldDimensionsTooLarge)
         } else {
             Ok((max_cols, max_rows))
         }
@@ -21,8 +20,8 @@ pub fn parse_world_dimensions(input: &str) -> Result<(usize, usize)> {
     }
 }
 
-pub fn parse_robot_position(input: &str) -> Result<Position> {
-    let mut iter = input.trim().split_whitespace();
+pub fn parse_init_position(input: &str) -> Result<Position> {
+    let mut iter = input.split_whitespace();
 
     let x = iter
         .next()
@@ -39,10 +38,10 @@ pub fn parse_robot_position(input: &str) -> Result<Position> {
         .and_then(|orientation| orientation.parse::<Orientation>().ok())
         .ok_or(MarsError::CouldNotParseOrientation)?;
 
-    Ok(Position::new(Coordinate::new(x, y), orientation))
+    Ok(Position::new(x, y, orientation))
 }
 
-pub fn parse_robot_instructions(input: &str) -> Result<Vec<Instruction>> {
+pub fn parse_instructions(input: &str) -> Result<Vec<Instruction>> {
     let mut result = vec![];
     for instruction in input.trim().as_bytes().iter().filter(|b| **b != b' ') {
         let next = match *instruction {
@@ -106,41 +105,41 @@ mod test {
     #[test]
     fn test_invalid_world_dimension_too_large() {
         let input = "50 60";
-        let expected_result = Err(MarsError::WorldDimensionTooLarge);
+        let expected_result = Err(MarsError::WorldDimensionsTooLarge);
         let actual_result = parse_world_dimensions(input);
         assert_eq!(expected_result, actual_result);
     }
 
     // Robot Position Parsing
     #[test]
-    fn test_successful_robot_position() {
+    fn test_successful_init_position() {
         let input = "1 1 E";
-        let expected_result = Ok(Position::new(Coordinate::new(1, 1), Orientation::East));
-        let actual_result = parse_robot_position(input);
+        let expected_result = Ok(Position::new(1, 1, Orientation::East));
+        let actual_result = parse_init_position(input);
         assert_eq!(expected_result, actual_result);
     }
 
     #[test]
-    fn test_successful_robot_position_with_whitespace() {
+    fn test_successful_init_position_with_whitespace() {
         let input = "10  5  N  ";
-        let expected_result = Ok(Position::new(Coordinate::new(10, 5), Orientation::North));
-        let actual_result = parse_robot_position(input);
+        let expected_result = Ok(Position::new(10, 5, Orientation::North));
+        let actual_result = parse_init_position(input);
         assert_eq!(expected_result, actual_result);
     }
 
     #[test]
-    fn test_invalid_robot_position_missing_coordinate() {
+    fn test_invalid_init_position_missing_coordinate() {
         let input = "5 N";
         let expected_result = Err(MarsError::CouldNotParseCoordinates);
-        let actual_result = parse_robot_position(input);
+        let actual_result = parse_init_position(input);
         assert_eq!(expected_result, actual_result);
     }
 
     #[test]
-    fn test_invalid_robot_position_missing_orientation() {
+    fn test_invalid_init_position_missing_orientation() {
         let input = "10 5";
         let expected_result = Err(MarsError::CouldNotParseOrientation);
-        let actual_result = parse_robot_position(input);
+        let actual_result = parse_init_position(input);
         assert_eq!(expected_result, actual_result);
     }
 
@@ -158,12 +157,12 @@ mod test {
             Instruction::Right,
             Instruction::Forward,
         ]);
-        let actual_result = parse_robot_instructions(input);
+        let actual_result = parse_instructions(input);
         assert_eq!(expected_result, actual_result);
     }
 
     #[test]
-    fn test_successful_instruction_with_whitesapce() {
+    fn test_successful_instruction_with_whitespace() {
         let input = "RF  RFRF L F";
         let expected_result = Ok(vec![
             Instruction::Right,
@@ -175,7 +174,7 @@ mod test {
             Instruction::Left,
             Instruction::Forward,
         ]);
-        let actual_result = parse_robot_instructions(input);
+        let actual_result = parse_instructions(input);
         assert_eq!(expected_result, actual_result);
     }
 
@@ -183,7 +182,7 @@ mod test {
     fn test_invalid_instruction() {
         let input = "W";
         let expected_result = Err(MarsError::CouldNotParseInstructions);
-        let actual_result = parse_robot_instructions(input);
+        let actual_result = parse_instructions(input);
         assert_eq!(expected_result, actual_result);
     }
 
@@ -191,7 +190,7 @@ mod test {
     fn test_invalid_instruction_too_many() {
         let input = "LLLLLLLLLLLLLRLRLRLRLRLFFLRLFLRFLRLFRLFLRFLRFLRLFLRFLRFLLRFLRLFRLFLRFLRLFRLFLRLFRLFRLFLRFLRFLRFLRLFRLLRFLRLF";
         let expected_result = Err(MarsError::TooManyInstructions);
-        let actual_result = parse_robot_instructions(input);
+        let actual_result = parse_instructions(input);
         assert_eq!(expected_result, actual_result);
     }
 }

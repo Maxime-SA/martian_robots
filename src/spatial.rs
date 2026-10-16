@@ -1,8 +1,3 @@
-use std::collections::HashMap;
-
-use crate::error::{MarsError, Result};
-use crate::robot::RobotId;
-
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum Orientation {
     North,
@@ -55,7 +50,7 @@ impl std::fmt::Display for Orientation {
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub struct Coordinate {
-    x: usize, // could be u8 since the max value is 50 but better DevEx to use usize
+    x: usize,
     y: usize,
 }
 impl Coordinate {
@@ -63,18 +58,10 @@ impl Coordinate {
         Self { x, y }
     }
 
-    fn add(&self, dx: isize, dy: isize) -> Result<Self> {
-        let x = self
-            .x
+    fn add(&self, dx: isize, dy: isize) -> Option<Self> {
+        self.x
             .checked_add_signed(dx)
-            .ok_or(MarsError::CoordinateOutOfBounds)?;
-
-        let y = self
-            .y
-            .checked_add_signed(dy)
-            .ok_or(MarsError::CoordinateOutOfBounds)?;
-
-        Ok(Self { x, y })
+            .and_then(|x| self.y.checked_add_signed(dy).map(|y| Self { x, y }))
     }
 }
 
@@ -84,15 +71,29 @@ pub struct Position {
     orientation: Orientation,
 }
 impl Position {
-    pub fn new(coordinate: Coordinate, orientation: Orientation) -> Self {
+    pub fn new(x: usize, y: usize, orientation: Orientation) -> Self {
         Self {
-            coordinate,
+            coordinate: Coordinate::new(x, y),
             orientation,
         }
     }
 
     pub fn coord(&self) -> Coordinate {
         self.coordinate
+    }
+
+    pub fn with_orientation(&self, orientation: Orientation) -> Self {
+        Self {
+            coordinate: self.coordinate,
+            orientation,
+        }
+    }
+
+    pub fn with_coordinate(&self, coordinate: Coordinate) -> Self {
+        Self {
+            coordinate,
+            orientation: self.orientation,
+        }
     }
 }
 impl std::fmt::Display for Position {
@@ -105,131 +106,270 @@ impl std::fmt::Display for Position {
     }
 }
 
-// talk about how we could make this generic over RobotId
 pub struct Grid {
     ncols: usize,
     nrows: usize,
-    grid: Vec<Option<RobotId>>, // chose 1D for better cache efficiency - this could also just be a hashset
-    positions: HashMap<RobotId, Position>,
 }
 impl Grid {
     pub fn new(max_col: usize, max_row: usize) -> Self {
         let ncols = max_col + 1;
         let nrows = max_row + 1;
 
-        Self {
-            ncols,
-            nrows,
-            grid: vec![None; nrows * ncols],
-            positions: HashMap::new(),
-        }
+        Self { ncols, nrows }
     }
 
-    pub fn insert(&mut self, id: RobotId, position: Position) -> Result<()> {
-        let i = self.map_coord(&position.coordinate)?;
-
-        if self.grid[i].is_some() {
-            Err(MarsError::RobotCollision)
-        } else {
-            self.positions.insert(id, position);
-            self.grid[i] = Some(id);
-            Ok(())
-        }
+    pub fn pivot_left(&self, position: Position) -> Position {
+        let new_orientation = position.orientation.left();
+        position.with_orientation(new_orientation)
     }
 
-    pub fn remove(&mut self, id: &RobotId) -> Result<Position> {
-        let position = self.positions.remove(id).ok_or(MarsError::RobotNotFound)?;
-        let i = self.map_coord(&position.coordinate)?;
-        self.grid[i] = None;
-        Ok(position)
+    pub fn pivot_right(&self, position: Position) -> Position {
+        let new_orientation = position.orientation.right();
+        position.with_orientation(new_orientation)
     }
 
-    pub fn pivot_left(&mut self, id: &RobotId) -> Result<()> {
-        let position = self.positions.get_mut(id).ok_or(MarsError::RobotNotFound)?;
-        position.orientation = position.orientation.left();
-        Ok(())
+    pub fn contains(&self, position: Position) -> bool {
+        self.map_coord(&position.coord()).is_some()
     }
 
-    pub fn pivot_right(&mut self, id: &RobotId) -> Result<()> {
-        let position = self.positions.get_mut(id).ok_or(MarsError::RobotNotFound)?;
-        position.orientation = position.orientation.right();
-        Ok(())
-    }
-
-    pub fn move_forward(&mut self, id: &RobotId) -> Result<()> {
-        let position = self.positions.get(id).ok_or(MarsError::RobotNotFound)?;
-
+    pub fn move_forward(&self, position: Position) -> Option<Position> {
         let (dx, dy) = position.orientation.forward_delta();
+
         let new_coord = position.coordinate.add(dx, dy)?;
-        let new_i = self.map_coord(&new_coord)?;
 
-        if self.grid[new_i].is_some() {
-            Err(MarsError::RobotCollision)
-        } else {
-            let old_i = self.map_coord(&position.coordinate)?;
-            self.grid[old_i] = None;
-
-            *self.positions.get_mut(id).unwrap() = Position::new(new_coord, position.orientation);
-            self.grid[new_i] = Some(id.clone());
-
-            Ok(())
-        }
+        self.map_coord(&new_coord)
+            .map(|_| position.with_coordinate(new_coord))
     }
 
-    pub fn get_position(&self, id: &RobotId) -> Result<Position> {
-        self.positions
-            .get(id)
-            .cloned()
-            .ok_or(MarsError::RobotNotFound)
-    }
-
-    fn map_coord(&self, coord: &Coordinate) -> Result<usize> {
+    fn map_coord(&self, coord: &Coordinate) -> Option<usize> {
         /*
-           Grid representation:
+           Primarily used as a Coordinate validation function which maps 2D to 1D indices
+
+           Coordinate assumes:
            - bottom-left is (0, 0)
            - top-right is (ncols - 1, nrows - 1)
 
-           coord.x maps to coord.x (identity function)
-           coord.y maps to (nrows - coord.y - 1)
+           Gird assumes:
+           - top-left is (0, 0)
+           - bottom-right is (ncols - 1, nrows - 1)
+
+           Mapping fn:
+           - coord.x -> coord.x (identity function)
+           - coord.y -> (nrows - coord.y - 1)
         */
-        let y = self
-            .nrows
-            .checked_sub_signed(coord.y as isize + 1)
-            .ok_or(MarsError::CoordinateOutOfBounds)?;
+        let y = self.nrows.checked_sub_signed(coord.y as isize + 1)?;
 
         if coord.x < self.ncols && y < self.nrows {
-            Ok(self.ncols * y + coord.x)
+            Some(self.ncols * y + coord.x)
         } else {
-            Err(MarsError::CoordinateOutOfBounds)
+            None
         }
     }
-}
 
-// practical for debugging purposes
-impl std::fmt::Display for Grid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    // practical for debugging
+    #[allow(dead_code)]
+    fn print(&mut self, position: Position) {
+        let target_i = self
+            .map_coord(&position.coordinate)
+            .expect("position needs to be within Grid dimensions for printing");
+
         for row in (0..self.nrows).rev() {
             for col in 0..self.ncols {
                 let i = self.map_coord(&Coordinate::new(col, row)).unwrap();
-                if let Some(id) = self.grid[i].as_ref() {
-                    let token = match self
-                        .get_position(id)
-                        .map(|position| position.orientation)
-                        .unwrap()
-                    {
+
+                if i == target_i {
+                    let token = match position.orientation {
                         Orientation::East => "\u{2192}",
                         Orientation::North => "\u{2191}",
                         Orientation::South => "\u{2193}",
                         Orientation::West => "\u{2190}",
                     };
-                    write!(f, "\x1b[32m{token}\x1b[0m")?;
+                    print!("\x1b[32m{token}\x1b[0m");
                 } else {
-                    write!(f, ".")?;
+                    print!(".");
                 }
             }
-            writeln!(f, "")?;
+            println!();
         }
+    }
+}
 
-        Ok(())
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Orientation Tests
+    #[test]
+    fn test_orientation_forward_delta() {
+        let cases = [
+            (Orientation::North, (0, 1)),
+            (Orientation::South, (0, -1)),
+            (Orientation::East, (1, 0)),
+            (Orientation::West, (-1, 0)),
+        ];
+
+        for (orientation, expected_result) in cases {
+            assert_eq!(expected_result, orientation.forward_delta());
+        }
+    }
+
+    #[test]
+    fn test_orientation_left() {
+        let cases = [
+            (Orientation::North, Orientation::West),
+            (Orientation::West, Orientation::South),
+            (Orientation::South, Orientation::East),
+            (Orientation::East, Orientation::North),
+        ];
+
+        for (actual_result, expected_result) in cases {
+            assert_eq!(expected_result, actual_result.left());
+        }
+    }
+
+    #[test]
+    fn test_orientation_right() {
+        let cases = [
+            (Orientation::North, Orientation::East),
+            (Orientation::East, Orientation::South),
+            (Orientation::South, Orientation::West),
+            (Orientation::West, Orientation::North),
+        ];
+
+        for (actual_result, expected_result) in cases {
+            assert_eq!(expected_result, actual_result.right());
+        }
+    }
+
+    // Coordinate Tests
+    #[test]
+    fn test_coordinate_add_valid() {
+        let cases = [
+            ((2, 3), (1, 0), (3, 3)),
+            ((2, 3), (0, 1), (2, 4)),
+            ((2, 3), (-1, 0), (1, 3)),
+            ((2, 3), (0, -1), (2, 2)),
+            ((2, 3), (0, 0), (2, 3)),
+            ((1, 1), (-1, -1), (0, 0)),
+        ];
+
+        for ((x, y), (dx, dy), (expected_x, expected_y)) in cases {
+            let expected_result = Some(Coordinate::new(expected_x, expected_y));
+            let actual_result = Coordinate::new(x, y).add(dx, dy);
+
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+
+    #[test]
+    fn test_coordinate_add_negative_result() {
+        let cases = [
+            ((0, 0), (-1, 0)),
+            ((0, 0), (0, -1)),
+            ((0, 0), (-1, -1)),
+            ((1, 1), (-2, 0)),
+            ((1, 1), (0, -2)),
+            ((3, 0), (1, -1)),
+        ];
+
+        for ((x, y), (dx, dy)) in cases {
+            let actual_result = Coordinate::new(x, y).add(dx, dy);
+
+            assert_eq!(None, actual_result);
+        }
+    }
+
+    // Grid Tests
+    #[test]
+    fn test_grid_pivot_left() {
+        let grid = Grid::new(5, 3);
+
+        let cases = [
+            (Orientation::North, Orientation::West),
+            (Orientation::West, Orientation::South),
+            (Orientation::South, Orientation::East),
+            (Orientation::East, Orientation::North),
+        ];
+
+        for (orientation, expected_orientation) in cases {
+            let expected_result = Position::new(2, 1, expected_orientation);
+            let actual_result = grid.pivot_left(Position::new(2, 1, orientation));
+
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+
+    #[test]
+    fn test_grid_pivot_right() {
+        let grid = Grid::new(5, 3);
+
+        let cases = [
+            (Orientation::North, Orientation::East),
+            (Orientation::East, Orientation::South),
+            (Orientation::South, Orientation::West),
+            (Orientation::West, Orientation::North),
+        ];
+
+        for (orientation, expected_orientation) in cases {
+            let expected_result = Position::new(2, 1, expected_orientation);
+            let actual_result = grid.pivot_right(Position::new(2, 1, orientation));
+
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+
+    #[test]
+    fn test_grid_contains() {
+        let grid = Grid::new(5, 3);
+
+        let cases = [
+            ((0, 0), true),
+            ((5, 3), true),
+            ((5, 0), true),
+            ((0, 3), true),
+            ((2, 1), true),
+            ((6, 0), false),
+            ((0, 4), false),
+            ((6, 4), false),
+            ((100, 100), false),
+        ];
+
+        for ((x, y), expected_result) in cases {
+            let actual_result = grid.contains(Position::new(x, y, Orientation::North));
+
+            assert_eq!(expected_result, actual_result);
+        }
+    }
+
+    #[test]
+    fn test_grid_move_forward() {
+        let grid = Grid::new(5, 3);
+
+        let cases = [
+            // valid
+            ((2, 1), Orientation::North, Some((2, 2))),
+            ((2, 1), Orientation::South, Some((2, 0))),
+            ((2, 1), Orientation::East, Some((3, 1))),
+            ((2, 1), Orientation::West, Some((1, 1))),
+            ((1, 2), Orientation::North, Some((1, 3))),
+            ((1, 1), Orientation::South, Some((1, 0))),
+            ((4, 1), Orientation::East, Some((5, 1))),
+            ((1, 1), Orientation::West, Some((0, 1))),
+            ((5, 2), Orientation::North, Some((5, 3))),
+            // invalid
+            ((1, 3), Orientation::North, None),
+            ((1, 0), Orientation::South, None),
+            ((5, 1), Orientation::East, None),
+            ((0, 1), Orientation::West, None),
+        ];
+
+        for ((x, y), orientation, expected_coord) in cases {
+            let expected_result =
+                expected_coord.map(|(new_x, new_y)| Position::new(new_x, new_y, orientation));
+
+            let actual_result = grid.move_forward(Position::new(x, y, orientation));
+
+            assert_eq!(expected_result, actual_result);
+        }
     }
 }
