@@ -26,7 +26,7 @@ cargo test                                 # run the tests
 
 **Input handling**
 
-- Strict input format 
+- Strict input format.
 - A start position outside the grid is an error.
 - Processing stops at the first invalid record.
 - Letters are upper case only.
